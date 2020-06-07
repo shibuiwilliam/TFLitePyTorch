@@ -1,27 +1,15 @@
 package com.shibuiwilliam.tflitepytorch
 
-import android.Manifest
-import android.app.Activity
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.os.Bundle
-import android.os.Handler
-import android.os.HandlerThread
 import android.util.Log
-import android.util.Rational
-import android.util.Size
-import android.view.Surface
 import android.view.TextureView
-import android.view.ViewGroup
 import android.widget.TextView
 import androidx.annotation.Nullable
 import androidx.annotation.UiThread
 import androidx.annotation.WorkerThread
-import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.core.*
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
+import androidx.camera.core.ImageProxy
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.GpuDelegate
 import org.tensorflow.lite.nnapi.NnApiDelegate
@@ -36,24 +24,21 @@ import org.tensorflow.lite.support.image.ops.ResizeOp.ResizeMethod
 import org.tensorflow.lite.support.image.ops.ResizeWithCropOrPadOp
 import org.tensorflow.lite.support.label.TensorLabel
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
-import java.lang.Exception
 import java.nio.MappedByteBuffer
-import java.util.*
 
 
 class TFLiteActivity : AbstractCameraXActivity() {
     private val TAG: String = TFLiteActivity::class.java.simpleName
 
     private lateinit var tfliteModel: MappedByteBuffer
-    internal lateinit var tfliteInterpreter: Interpreter
+    private lateinit var tfliteInterpreter: Interpreter
     private val tfliteOptions = Interpreter.Options()
     private var gpuDelegate: GpuDelegate? = null
     private var nnApiDelegate: NnApiDelegate? = null
 
     private lateinit var inputImageBuffer: TensorImage
-    private lateinit var outputProbabilityButter: TensorBuffer
+    private lateinit var outputProbabilityBuffer: TensorBuffer
     private lateinit var probabilityProcessor: TensorProcessor
-
 
     override fun getContentView(): Int = R.layout.activity_t_f_lite
     override fun getCameraTextureView(): TextureView = findViewById(R.id.cameraPreviewTextureView)
@@ -70,13 +55,13 @@ class TFLiteActivity : AbstractCameraXActivity() {
             .build()
 
         inputImageBuffer = TensorImage(tfliteInterpreter.getInputTensor(0).dataType())
-        outputProbabilityButter = TensorBuffer.createFixedSize(
+        outputProbabilityBuffer = TensorBuffer.createFixedSize(
             tfliteInterpreter.getOutputTensor(0).shape(),
             tfliteInterpreter.getInputTensor(0).dataType()
         )
     }
 
-    internal fun initializeTFLite(device: Constants.Device, numThreads: Int){
+    private fun initializeTFLite(device: Constants.Device, numThreads: Int) {
         when (device) {
             Constants.Device.NNAPI -> {
                 nnApiDelegate = NnApiDelegate()
@@ -101,9 +86,10 @@ class TFLiteActivity : AbstractCameraXActivity() {
             var bitmap = Utils.imageToBitmap(image)
             bitmap = rotateBitmap(bitmap, 90f)
             val labeledProbability = classifyImage(bitmap)
-            Log.i(TAG, "prediction: ${labeledProbability}")
+            Log.i(TAG, "top${Constants.TOPK} prediction: ${labeledProbability}")
             return labeledProbability.map{it ->
-                "${it.key}: ${it.value} \n"
+                val p = "%,.2f".format(it.value)
+                "${it.key}: ${p} \n"
             }.joinToString()
         }
         catch (e: Exception){
@@ -121,12 +107,13 @@ class TFLiteActivity : AbstractCameraXActivity() {
         val inputImageBuffer = loadImage(bitmap)
         tfliteInterpreter.run(
             inputImageBuffer!!.buffer,
-            outputProbabilityButter.buffer.rewind()
+            outputProbabilityBuffer.buffer.rewind()
         )
-        val labeledProbability: MutableMap<String, Float> = TensorLabel(
+        val labeledProbability: Map<String, Float> = TensorLabel(
             app!!.labels,
-            probabilityProcessor.process(outputProbabilityButter)
+            probabilityProcessor.process(outputProbabilityBuffer)
         ).mapWithFloatValue
+        Log.i(TAG, "full prediction: ${labeledProbability}")
         return Utils.prioritizeByProbability(labeledProbability)
     }
 
@@ -135,7 +122,8 @@ class TFLiteActivity : AbstractCameraXActivity() {
 
         val cropSize = Math.min(bitmap.width, bitmap.height)
 
-        val imageProcessor: ImageProcessor = ImageProcessor.Builder()
+        val imageProcessor = ImageProcessor
+            .Builder()
             .add(ResizeWithCropOrPadOp(cropSize, cropSize))
             .add(
                 ResizeOp(
@@ -163,10 +151,8 @@ class TFLiteActivity : AbstractCameraXActivity() {
         return NormalizeOp(Constants.PROBABILITY_MEAN, Constants.PROBABILITY_STD)
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        stopBackgroundThread()
-
+    override fun onStop() {
+        super.onStop()
         if (::tfliteInterpreter.isInitialized) {
             tfliteInterpreter.close()
         }
@@ -178,5 +164,21 @@ class TFLiteActivity : AbstractCameraXActivity() {
             nnApiDelegate!!.close()
             nnApiDelegate = null
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (::tfliteInterpreter.isInitialized) {
+            tfliteInterpreter.close()
+        }
+        if (gpuDelegate != null) {
+            gpuDelegate!!.close()
+            gpuDelegate = null
+        }
+        if (nnApiDelegate != null) {
+            nnApiDelegate!!.close()
+            nnApiDelegate = null
+        }
+
     }
 }

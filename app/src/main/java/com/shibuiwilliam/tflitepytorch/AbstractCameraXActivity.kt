@@ -6,7 +6,6 @@ import android.graphics.Matrix
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
-import android.os.PersistableBundle
 import android.util.Log
 import android.util.Rational
 import android.util.Size
@@ -114,7 +113,7 @@ abstract class AbstractCameraXActivity : AppCompatActivity(){
                 val result = analyzeImage(image, rotationDegrees)
 
                 if (result != null){
-                    runOnUiThread(Runnable { showResult(result!!) })
+                    runOnUiThread(Runnable { showResult(result) })
                 }
                 mLastAnalysisResultTime = System.currentTimeMillis()
             }
@@ -145,9 +144,11 @@ abstract class AbstractCameraXActivity : AppCompatActivity(){
     }
 
     protected fun stopBackgroundThread() {
-        mBackgroundThread!!.quitSafely()
-        try {
+        if (mBackgroundHandler != null) {
+            mBackgroundThread!!.quitSafely()
             mBackgroundThread!!.join()
+        }
+        try {
             mBackgroundThread = null
             mBackgroundHandler = null
         } catch (e: InterruptedException) {
@@ -180,12 +181,12 @@ abstract class AbstractCameraXActivity : AppCompatActivity(){
     }
 
     override fun onStop() {
-        super.onStop()
         stopBackgroundThread()
+        super.onStop()
     }
 
     override fun onDestroy() {
-        super.onDestroy()
         stopBackgroundThread()
+        super.onDestroy()
     }
 }

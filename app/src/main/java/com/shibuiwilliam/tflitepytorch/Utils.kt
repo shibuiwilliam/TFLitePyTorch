@@ -78,7 +78,7 @@ object Utils{
         return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
     }
 
-    fun prioritizeByProbability(labeledProbability: MutableMap<String, Float>): MutableMap<String, Float>{
+    fun prioritizeByProbability(labeledProbability: Map<String, Float>): MutableMap<String, Float> {
         val priorityMap: MutableMap<String, Float> = mutableMapOf()
         val priorityQueue = PriorityQueue(
             Constants.TOPK,

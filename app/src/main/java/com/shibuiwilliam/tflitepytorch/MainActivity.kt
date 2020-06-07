@@ -28,7 +28,7 @@ class MainActivity : AppCompatActivity() {
 
         if (app==null){
             app = application as App
-            app!!.initialize(this, Constants.Device.NNAPI, 4)
+            app!!.initialize(this)
         }
 
         tfliteButton = findViewById(R.id.TFLite)
@@ -39,6 +39,11 @@ class MainActivity : AppCompatActivity() {
         })
 
         pytorchButton = findViewById(R.id.PyTorch)
+        pytorchButton.setOnClickListener(object : View.OnClickListener {
+            override fun onClick(v: View?) {
+                startActivity(Intent(application, PyTorchActivity::class.java))
+            }
+        })
 
     }
 
