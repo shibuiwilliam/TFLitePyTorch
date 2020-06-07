@@ -1,14 +1,18 @@
 package com.shibuiwilliam.tflitepytorch
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.util.Log
+import androidx.camera.core.ImageProxy
 import java.io.*
-import java.util.*
 
 object Utils{
     private val TAG: String = Utils::class.java.simpleName
 
-    fun loadLabelList(context: Context, labelPath: String = Constants.LabelPath): List<String> {
+    fun loadLabelList(context: Context, labelPath: String = Constants.LABEL_PATH): List<String> {
         Log.v(TAG, "Loading ${labelPath}")
         val labelList: MutableList<String> = mutableListOf()
         try {
@@ -49,25 +53,26 @@ object Utils{
         return null
     }
 
-    fun topK(a: FloatArray, topk: Int): IntArray? {
-        val values = FloatArray(topk)
-        Arrays.fill(values, -Float.MAX_VALUE)
-        val ixs = IntArray(topk)
-        Arrays.fill(ixs, -1)
-        for (i in a.indices) {
-            for (j in 0 until topk) {
-                if (a[i] > values[j]) {
-                    for (k in topk - 1 downTo j + 1) {
-                        values[k] = values[k - 1]
-                        ixs[k] = ixs[k - 1]
-                    }
-                    values[j] = a[i]
-                    ixs[j] = i
-                    break
-                }
-            }
-        }
-        return ixs
+    fun imageToBitmap(image: ImageProxy): Bitmap {
+        val yBuffer = image.planes[0].buffer
+        val uBuffer = image.planes[1].buffer
+        val vBuffer = image.planes[2].buffer
+
+        val ySize = yBuffer.remaining()
+        val uSize = uBuffer.remaining()
+        val vSize = vBuffer.remaining()
+
+        val nv21 = ByteArray(ySize + uSize + vSize)
+
+        yBuffer.get(nv21, 0, ySize)
+        vBuffer.get(nv21, ySize, vSize)
+        uBuffer.get(nv21, ySize + vSize, uSize)
+
+        val yuvImage = YuvImage(nv21, Constants.IMAGE_FORMAT_NV21, image.width, image.height, null)
+        val out = ByteArrayOutputStream()
+        yuvImage.compressToJpeg(Rect(0, 0, yuvImage.width, yuvImage.height), 100, out)
+        val imageBytes = out.toByteArray()
+        return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
     }
 
 }

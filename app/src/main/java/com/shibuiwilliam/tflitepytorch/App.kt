@@ -2,9 +2,7 @@ package com.shibuiwilliam.tflitepytorch
 
 import android.app.Activity
 import android.app.Application
-import org.pytorch.IValue
 import org.pytorch.Module
-import org.pytorch.Tensor
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.GpuDelegate
 import org.tensorflow.lite.nnapi.NnApiDelegate
@@ -30,7 +28,7 @@ class App: Application(){
     }
 
     internal fun initialize(activity: Activity, device: Constants.Device, numThreads: Int){
-        labels = Utils.loadLabelList(activity, Constants.LabelPath)
+        labels = Utils.loadLabelList(activity, Constants.LABEL_PATH)
 
         initializeTFLite(activity, device, numThreads)
         initializePyTorch(activity)
@@ -50,12 +48,13 @@ class App: Application(){
             }
         }
         tfliteOptions.setNumThreads(numThreads)
-        tfliteModel = FileUtil.loadMappedFile(activity, Constants.TFLiteMobileNetV2Path)
+        tfliteModel = FileUtil.loadMappedFile(activity, Constants.TFLITE_MOBILENET_V2_PATH)
         tfliteInterpreter = Interpreter(tfliteModel, tfliteOptions)
     }
 
     internal fun initializePyTorch(activity: Activity){
-        pytorchModule = Module.load(Utils.assetFilePath(activity, Constants.PyTorchMobileNetQuantizedPath))
+        pytorchModule =
+            Module.load(Utils.assetFilePath(activity, Constants.PYTORCH_MOBILENET_QUANTIZED_PATH))
     }
 
     internal fun close() {
