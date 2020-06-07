@@ -8,6 +8,8 @@ import android.graphics.YuvImage
 import android.util.Log
 import androidx.camera.core.ImageProxy
 import java.io.*
+import java.util.*
+import kotlin.Comparator
 
 object Utils{
     private val TAG: String = Utils::class.java.simpleName
@@ -23,7 +25,8 @@ object Utils{
                     line = reader.readLine()
                 }
             }
-        } catch (e: IOException) {
+        }
+        catch (e: IOException) {
             Log.e(TAG, "Failed to read label list.", e)
         }
 
@@ -73,6 +76,31 @@ object Utils{
         yuvImage.compressToJpeg(Rect(0, 0, yuvImage.width, yuvImage.height), 100, out)
         val imageBytes = out.toByteArray()
         return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+    }
+
+    fun prioritizeByProbability(labeledProbability: MutableMap<String, Float>): MutableMap<String, Float>{
+        val priorityMap: MutableMap<String, Float> = mutableMapOf()
+        val priorityQueue = PriorityQueue(
+            Constants.TOPK,
+            Comparator<String> {a,b ->
+                val aProb = labeledProbability.getOrDefault(a, 0f)
+                val bProb = labeledProbability.getOrDefault(b, 0f)
+                when {
+                    aProb > bProb -> 1
+                    aProb < bProb -> -1
+                    else -> 0
+                }
+            }
+        )
+        for (k in labeledProbability.keys){
+            priorityQueue.add(k)
+            if (priorityQueue.size > Constants.TOPK) priorityQueue.remove()
+        }
+        for (i in 0 until Constants.TOPK){
+            val p = priorityQueue.poll()
+            priorityMap[p] = labeledProbability.getOrDefault(p, 0f)
+        }
+        return priorityMap
     }
 
 }

@@ -1,6 +1,7 @@
 package com.shibuiwilliam.tflitepytorch
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
@@ -14,10 +15,17 @@ import android.view.Surface
 import android.view.TextureView
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.annotation.Nullable
+import androidx.annotation.UiThread
+import androidx.annotation.WorkerThread
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import org.tensorflow.lite.Interpreter
+import org.tensorflow.lite.gpu.GpuDelegate
+import org.tensorflow.lite.nnapi.NnApiDelegate
+import org.tensorflow.lite.support.common.FileUtil
 import org.tensorflow.lite.support.common.TensorOperator
 import org.tensorflow.lite.support.common.TensorProcessor
 import org.tensorflow.lite.support.common.ops.NormalizeOp
@@ -28,119 +36,90 @@ import org.tensorflow.lite.support.image.ops.ResizeOp.ResizeMethod
 import org.tensorflow.lite.support.image.ops.ResizeWithCropOrPadOp
 import org.tensorflow.lite.support.label.TensorLabel
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
+import java.lang.Exception
+import java.nio.MappedByteBuffer
+import java.util.*
 
 
 class TFLiteActivity : AbstractCameraXActivity() {
     private val TAG: String = TFLiteActivity::class.java.simpleName
 
-    private var app: App? = null
-    private val REQUEST_CODE_PERMISSIONS = 101
-    private val REQUIRED_PERMISSIONS = arrayOf<String>(
-        Manifest.permission.CAMERA
-    )
-//    protected var mBackgroundThread: HandlerThread? = null
-//    protected var mBackgroundHandler: Handler? = null
-
-    lateinit var textureView: TextureView
-    lateinit var textView: TextView
+    private lateinit var tfliteModel: MappedByteBuffer
+    internal lateinit var tfliteInterpreter: Interpreter
+    private val tfliteOptions = Interpreter.Options()
+    private var gpuDelegate: GpuDelegate? = null
+    private var nnApiDelegate: NnApiDelegate? = null
 
     private lateinit var inputImageBuffer: TensorImage
     private lateinit var outputProbabilityButter: TensorBuffer
     private lateinit var probabilityProcessor: TensorProcessor
 
-    private var mLastAnalysisResultTime: Long = System.currentTimeMillis()
+
+    override fun getContentView(): Int = R.layout.activity_t_f_lite
+    override fun getCameraTextureView(): TextureView = findViewById(R.id.cameraPreviewTextureView)
+    override fun getInferenceTextView(): TextView = findViewById(R.id.inferenceText)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_t_f_lite)
 
-        textureView = findViewById(R.id.cameraPreviewTextureView)
-        textView = findViewById(R.id.inferenceText)
-
-        if (app==null) app = application as App
+        initializeTFLite(Constants.Device.NNAPI, Constants.NUM_THREAD)
 
         probabilityProcessor = TensorProcessor
             .Builder()
-            .add(getPostprocessNormalizeOp())
+            .add(postprocessNormalizeOp())
             .build()
 
-        inputImageBuffer = TensorImage(app!!.tfliteInterpreter.getInputTensor(0).dataType())
+        inputImageBuffer = TensorImage(tfliteInterpreter.getInputTensor(0).dataType())
         outputProbabilityButter = TensorBuffer.createFixedSize(
-            app!!.tfliteInterpreter.getOutputTensor(0).shape(),
-            app!!.tfliteInterpreter.getInputTensor(0).dataType()
+            tfliteInterpreter.getOutputTensor(0).shape(),
+            tfliteInterpreter.getInputTensor(0).dataType()
         )
+    }
 
-
-        if (allPermissionsGranted()) {
-            startBackgroundThread()
-            textureView.post { setupCameraX() }
-            textureView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                updateTransform()
+    internal fun initializeTFLite(device: Constants.Device, numThreads: Int){
+        when (device) {
+            Constants.Device.NNAPI -> {
+                nnApiDelegate = NnApiDelegate()
+                tfliteOptions.addDelegate(nnApiDelegate)
             }
-        } else {
-            ActivityCompat.requestPermissions(
-                this,
-                REQUIRED_PERMISSIONS,
-                REQUEST_CODE_PERMISSIONS
-            )
+            Constants.Device.GPU -> {
+                gpuDelegate = GpuDelegate()
+                tfliteOptions.addDelegate(gpuDelegate)
+            }
+            Constants.Device.CPU -> {
+            }
+        }
+        tfliteOptions.setNumThreads(numThreads)
+        tfliteModel = FileUtil.loadMappedFile(this, Constants.TFLITE_MOBILENET_V2_PATH)
+        tfliteInterpreter = Interpreter(tfliteModel, tfliteOptions)
+    }
+
+    @WorkerThread
+    @Nullable
+    override fun analyzeImage(image: ImageProxy, rotationDegrees: Int): String? {
+        try {
+            var bitmap = Utils.imageToBitmap(image)
+            bitmap = rotateBitmap(bitmap, 90f)
+            val labeledProbability = classifyImage(bitmap)
+            Log.i(TAG, "prediction: ${labeledProbability}")
+            return labeledProbability.map{it ->
+                "${it.key}: ${it.value} \n"
+            }.joinToString()
+        }
+        catch (e: Exception){
+            e.printStackTrace()
+            return null
         }
     }
 
-    private fun setupCameraX() {
-        CameraX.unbindAll()
-
-        val screenSize = Size(textureView.width, textureView.height)
-        val screenAspectRatio = Rational(1, 1)
-
-        val previewConfig = PreviewConfig
-            .Builder()
-            .apply {
-                setLensFacing(CameraX.LensFacing.BACK)
-                setTargetResolution(screenSize)
-                setTargetAspectRatio(screenAspectRatio)
-                setTargetRotation(windowManager.defaultDisplay.rotation)
-            }
-            .build()
-        val preview = Preview(previewConfig)
-
-        preview.setOnPreviewOutputUpdateListener {
-            val parent = textureView.parent as ViewGroup
-            parent.removeView(textureView)
-            textureView.surfaceTexture = it.surfaceTexture
-            parent.addView(textureView, 0)
-        }
-
-        val imageAnalysisConfig = ImageAnalysisConfig
-            .Builder()
-            .apply {
-                setCallbackHandler(mBackgroundHandler)
-                setImageReaderMode(ImageAnalysis.ImageReaderMode.ACQUIRE_LATEST_IMAGE)
-            }
-            .build()
-
-        val imageAnalysis = ImageAnalysis(imageAnalysisConfig)
-        imageAnalysis.analyzer =
-            ImageAnalysis.Analyzer { image: ImageProxy?, rotationDegrees: Int ->
-                if (System.currentTimeMillis() - mLastAnalysisResultTime < 500) return@Analyzer
-                if (image == null) return@Analyzer
-                analyzeImage(image, rotationDegrees)
-                mLastAnalysisResultTime = System.currentTimeMillis()
-            }
-
-        CameraX.bindToLifecycle(this, preview, imageAnalysis)
-    }
-
-
-    fun analyzeImage(image: ImageProxy, rotationDegrees: Int) {
-        var bitmap = Utils.imageToBitmap(image)
-        bitmap = rotateBitmap(bitmap, 90f)
-        val labeledProbability = classifyImage(bitmap)
-        Log.i(TAG, "prediction: ${labeledProbability}")
+    @UiThread
+    override fun showResult(result: String) {
+        textView.text = result
     }
 
     private fun classifyImage(bitmap: Bitmap): Map<String, Float> {
         val inputImageBuffer = loadImage(bitmap)
-        app!!.tfliteInterpreter.run(
+        tfliteInterpreter.run(
             inputImageBuffer!!.buffer,
             outputProbabilityButter.buffer.rewind()
         )
@@ -148,7 +127,7 @@ class TFLiteActivity : AbstractCameraXActivity() {
             app!!.labels,
             probabilityProcessor.process(outputProbabilityButter)
         ).mapWithFloatValue
-        return labeledProbability
+        return Utils.prioritizeByProbability(labeledProbability)
     }
 
     private fun loadImage(bitmap: Bitmap): TensorImage? {
@@ -165,7 +144,7 @@ class TFLiteActivity : AbstractCameraXActivity() {
                     ResizeMethod.NEAREST_NEIGHBOR
                 )
             )
-            .add(getPreprocessNormalizeOp())
+            .add(preprocessNormalizeOp())
             .build()
         return imageProcessor.process(inputImageBuffer)
     }
@@ -176,73 +155,28 @@ class TFLiteActivity : AbstractCameraXActivity() {
         return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
-    private fun getPreprocessNormalizeOp(): TensorOperator? {
+    private fun preprocessNormalizeOp(): TensorOperator? {
         return NormalizeOp(Constants.IMAGE_MEAN, Constants.IMAGE_STD)
     }
 
-    protected fun getPostprocessNormalizeOp(): TensorOperator? {
+    protected fun postprocessNormalizeOp(): TensorOperator? {
         return NormalizeOp(Constants.PROBABILITY_MEAN, Constants.PROBABILITY_STD)
     }
-
-    private fun updateTransform() {
-        val matrix = Matrix()
-        val centerX = textureView.width / 2f
-        val centerY = textureView.height / 2f
-
-        val rotationDegrees = when (textureView.display.rotation) {
-            Surface.ROTATION_0 -> 0
-            Surface.ROTATION_90 -> 90
-            Surface.ROTATION_180 -> 180
-            Surface.ROTATION_270 -> 270
-            else -> return
-        }
-        matrix.postRotate(-rotationDegrees.toFloat(), centerX, centerY)
-        textureView.setTransform(matrix)
-    }
-
-//    protected fun startBackgroundThread() {
-//        mBackgroundThread = HandlerThread("BackgroundThread")
-//        mBackgroundThread!!.start()
-//        mBackgroundHandler = Handler(mBackgroundThread!!.looper)
-//    }
-//
-//    protected fun stopBackgroundThread() {
-//        mBackgroundThread!!.quitSafely()
-//        try {
-//            mBackgroundThread!!.join()
-//            mBackgroundThread = null
-//            mBackgroundHandler = null
-//        } catch (e: InterruptedException) {
-//            Log.e(TAG, "Error on stopping background thread", e)
-//        }
-//    }
-//
-//    override fun onRequestPermissionsResult(
-//        requestCode: Int,
-//        permissions: Array<String>,
-//        grantResults: IntArray
-//    ) {
-//        if (requestCode == REQUEST_CODE_PERMISSIONS) {
-//            if (!allPermissionsGranted()) {
-//                finish()
-//            }
-//        }
-//    }
-//
-//    private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
-//        for (permission in REQUIRED_PERMISSIONS) {
-//            if (ContextCompat.checkSelfPermission(this, permission)
-//                != PackageManager.PERMISSION_GRANTED
-//            ) {
-//                return false
-//            }
-//        }
-//        Log.i(TAG, "Permitted to use camera and internet")
-//        return true
-//    }
 
     override fun onDestroy() {
         super.onDestroy()
         stopBackgroundThread()
+
+        if (::tfliteInterpreter.isInitialized) {
+            tfliteInterpreter.close()
+        }
+        if (gpuDelegate != null) {
+            gpuDelegate!!.close()
+            gpuDelegate = null
+        }
+        if (nnApiDelegate != null) {
+            nnApiDelegate!!.close()
+            nnApiDelegate = null
+        }
     }
 }

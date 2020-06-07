@@ -66,8 +66,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (app != null){
-            app!!.close()
-        }
+        if (app != null) app!!.close()
     }
 }

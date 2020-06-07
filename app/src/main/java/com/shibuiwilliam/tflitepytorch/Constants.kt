@@ -15,6 +15,10 @@ object Constants{
     const val PROBABILITY_MEAN = 0.0f
     const val PROBABILITY_STD = 1.0f
 
+    const val TOPK = 5
+
+    const val NUM_THREAD = 4
+
     enum class Device{
         CPU,
         NNAPI,
