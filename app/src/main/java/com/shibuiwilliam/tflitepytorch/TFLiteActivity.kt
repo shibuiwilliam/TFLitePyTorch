@@ -49,16 +49,15 @@ class TFLiteActivity : AbstractCameraXActivity() {
 
         initializeTFLite(Constants.Device.NNAPI, Constants.NUM_THREAD)
 
-        probabilityProcessor = TensorProcessor
-            .Builder()
-            .add(postprocessNormalizeOp())
-            .build()
-
         inputImageBuffer = TensorImage(tfliteInterpreter.getInputTensor(0).dataType())
         outputProbabilityBuffer = TensorBuffer.createFixedSize(
             tfliteInterpreter.getOutputTensor(0).shape(),
             tfliteInterpreter.getInputTensor(0).dataType()
         )
+        probabilityProcessor = TensorProcessor
+            .Builder()
+            .add(postprocessNormalizeOp())
+            .build()
     }
 
     private fun initializeTFLite(device: Constants.Device, numThreads: Int) {
